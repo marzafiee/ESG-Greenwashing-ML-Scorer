@@ -50,7 +50,7 @@ def fetch_news_articles(company_name):
 
         safe_name = company_name.lower().replace(" ", "_")
         # save to json file
-        outputPath = f"data/raw/{safe_name}_news_articles.json"
+        outputPath = f"data/raw/news_{safe_name}.json"
 
         with open(outputPath, "w", encoding="utf-8") as f:
             json.dump(news_articles, f, indent=4)

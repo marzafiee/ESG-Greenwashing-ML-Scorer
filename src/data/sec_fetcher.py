@@ -66,7 +66,7 @@ def fetch_10k_filings(CIK_num):
         os.makedirs("data/raw", exist_ok=True)
 
         # save to json file
-        outputPath = f"data/raw/{company_name}({CIK_num})_10k_filings.json"
+        outputPath = f"data/raw/sec_{company_name}({CIK_num})_10k_filings.json"
 
         with open(outputPath, "w") as f:
             json.dump(filings_10k, f, indent=4)
