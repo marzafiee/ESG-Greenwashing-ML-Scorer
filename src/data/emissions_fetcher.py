@@ -56,7 +56,7 @@ def fetch_emissions_by_country(country_name, start_year):
     safe_name = country_name.lower().replace(" ", "_")
 
     # save to csv file
-    outputPath = f"data/raw/emissions_{safe_name}_from {start_year}.csv"
+    outputPath = f"data/raw/emissions_{safe_name}_from_{start_year}.csv"
     filtered_columns.to_csv(outputPath, index=False)
     print(f"Saved emissions data for {country_name} to {outputPath}")
 

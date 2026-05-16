@@ -19,7 +19,7 @@ def fetch_10k_filings(CIK_num):
     url = f"https://data.sec.gov/submissions/CIK{CIK_num}.json"
 
     # sec also recommends using a User-Agent header
-    headers = {"User-Agent": "inezannemarie@gmail.com"}
+    headers = {"User-Agent": os.getenv("SEC_USER_AGENT")}
 
     # now we can get all the information needed from this r  Response object (below). this line sends a request
     try:
