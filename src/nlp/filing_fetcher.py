@@ -3,16 +3,20 @@
 
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 import re
 import os
 
 # to import, use: from filing_fetacher import filing_fetcher
+
+load_dotenv()  # loading the header value from .env
 
 
 def filing_fetcher(sec_JSON_filename, accession_num):
     """this function"""
 
     headers = {"User-Agent": os.getenv("SEC_USER_AGENT")}
+    # print("USER AGENT:", headers["User-Agent"])
 
     # extract CIK from filename - it's in parantheses
     # using the .find() string slicing approach in py
@@ -20,7 +24,7 @@ def filing_fetcher(sec_JSON_filename, accession_num):
     start = text.find("(") + 1
     end = text.find(")")
     CIK_num = text[start:end].zfill(10)
-    print(CIK_num)  # for testing purposes
+    # print(CIK_num)  # for testing purposes
 
     # get company name from SEC API
     meta_url = f"https://data.sec.gov/submissions/CIK{CIK_num}.json"
@@ -32,16 +36,17 @@ def filing_fetcher(sec_JSON_filename, accession_num):
     # remove dashes from accession number
     # eg: 0001628280-26-003952
     accession_no_dashes = re.sub(r"\D", "", accession_num)
-    print(accession_no_dashes)  # for testing purposes
+    # print(accession_no_dashes)  # for testing purposes
 
     # building our URL to get the associated index page
     html_page_url = f"https://www.sec.gov/Archives/edgar/data/{CIK_num}/{accession_no_dashes}/{accession_num}-index.htm"
 
     # fetch the page first
     r = requests.get(html_page_url, headers=headers)
+
     # parse it with BeautifulSoup
     soup = BeautifulSoup(r.text, "html.parser")
-    print(soup.prettify())
+    # print(soup.prettify())
 
     # find all table rows
     rows = soup.find_all("tr")
