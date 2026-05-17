@@ -1,4 +1,9 @@
 # adding new_venv to .gitignore
 new_venv/
 
+# never commit the actual .env file to GitHub
 .env
+
+# from preprocessor.py
+__pycache__/
+*.pyc
