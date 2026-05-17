@@ -1,4 +1,4 @@
-# ESG Finance ML Scorer
+# ESG Greenwashing ML Scorer
 
 A machine learning project that scores companies on ESG credibility by comparing
 what they claim in SEC filings against independent news sources and emissions databases.
