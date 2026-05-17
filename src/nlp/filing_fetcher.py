@@ -62,13 +62,24 @@ def filing_fetcher(sec_JSON_filename, accession_num):
         if columns[0].text.strip() == "1" and columns[3].text.strip() == "10-K":
             # extract the document filename (e.g. tsla-20251231.htm)
             link_tag = columns[2].find("a")
-            href = link_tag["href"]  # eg output: /Archives/example-10k.htm
+            href = link_tag[
+                "href"
+            ]  # eg output: /ix?doc=/Archives/edgar/data/.../tsla-20251231.htm
+
+            # strip the XBRL viewer prefix if present
+            if "?doc=" in href:
+                href = href.split("?doc=")[
+                    1
+                ]  # keeping only /Archives/edgar/data/.../tsla-20251231.htm
 
             # construct full document URL and fetch it
             BASE_URL = "https://www.sec.gov/"
             full_url = BASE_URL + href
 
             print(full_url)
+
+            # actually fetching the 10-K document
+            doc_response = requests.get(full_url, headers=headers)
 
             # save raw HTML to data/raw/
             # making sure it exists
@@ -80,13 +91,13 @@ def filing_fetcher(sec_JSON_filename, accession_num):
             )
 
             with open(outputPath, "w", encoding="utf-8") as f:
-                f.write(r.text)
+                f.write(doc_response.text)
 
             print(f"Saved filing HTML for {company_name} to {outputPath}")
 
-            # return the HTML
-            return r.text
+            # return the 10-K document
+            return doc_response.text
 
 
 # testing
-filing_fetcher("sec_Tesla, Inc.(0001318605)_10k_filings.json", "0001628280-26-003952")
+# filing_fetcher("sec_Tesla, Inc.(0001318605)_10k_filings.json", "0001628280-26-003952")
