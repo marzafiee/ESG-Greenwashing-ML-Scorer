@@ -264,11 +264,19 @@ class SECFilingCleaner:
 if __name__ == "__main__":
     from filing_fetcher import filing_fetcher
 
-    # fetch the raw HTML from SEC EDGAR
-    raw_html = filing_fetcher(
-        "sec_Tesla, Inc.(0001318605)_10k_filings.json", "0001628280-26-003952"
-    )
+    sec_json = "sec_Tesla, Inc.(0001318605)_10k_filings.json"
+    accession = "0001628280-26-003952"
 
+    # parse CIK and company name from the JSON filename — same way filing_fetcher does it
+    start = sec_json.find("(") + 1
+    end = sec_json.find(")")
+    cik = sec_json[start:end].zfill(10)
+    company_name = (
+        sec_json.split("(")[0].split("_", 1)[1].strip()
+    )  # grabs everything between first "_" and "("   # e.g. "Tesla, Inc."
+
+    # fetch + clean
+    raw_html = filing_fetcher(sec_json, accession)
     cleaner = SECFilingCleaner()
     clean_text = cleaner.clean(raw_html)
 
@@ -277,7 +285,9 @@ if __name__ == "__main__":
 
     # save cleaned output
     os.makedirs("data/cleaned", exist_ok=True)
-    with open("data/cleaned/tesla_10k_cleaned.txt", "w", encoding="utf-8") as f:
+    filename = f"data/cleaned/cleaned_{company_name}_{cik}_{accession}.txt"
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(clean_text)
 
+    print(f"Saved cleaned text to {filename}")
     print(f"\nTotal characters after cleaning: {len(clean_text):,}")
