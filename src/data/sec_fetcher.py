@@ -1,8 +1,11 @@
 import requests
 import json
 import os
+from dotenv import load_dotenv
 
 # to import, use: from sec_fetcher import fetch_10k_filings
+
+load_dotenv()
 
 
 def fetch_10k_filings(CIK_num):
@@ -89,4 +92,4 @@ def fetch_10k_filings(CIK_num):
 
 
 # trials
-print(fetch_10k_filings("1318606"))
+print(fetch_10k_filings("320193"))
