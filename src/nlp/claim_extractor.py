@@ -1,4 +1,5 @@
-# Split the cleaned text into individual sentences  with spaCy.
+### building an NLP inference pipeline that fetches SEC filings, cleans them, and uses a pretrained zero-shot classification model to extract and categorize ESG claims from the text.
+
 import spacy  # NLP engine and sentence splitting
 import os
 import pandas as pd  # to build and save csvs
