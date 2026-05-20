@@ -5,6 +5,7 @@ import os
 import pandas as pd  # to build and save csvs
 from transformers import pipeline  # Hugging Face which gives us ready-made AI model
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -23,6 +24,9 @@ except Exception as e:
 
 # now for the labels we'd be asking our classifier to choose between. the model will score all of them
 ESG_LABELS = ["Environmental", "Social", "Governance"]
+
+# matches SEC section headers like "Item 1." or "Item 1A" for same pattern as preprocessor.py so that we can skip these parts when running
+SECTION_HEADER_PATTERN = re.compile(r"^(item\s+\d+[a-zA-Z]?\.?)", re.IGNORECASE)
 
 
 def is_esg_claim(sentence: str) -> bool:
@@ -65,7 +69,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
     """
     Takes a path to a .txt file (the cleaned text from preprocessor.py) and extracts claims from them
     """
-    # reding the file given. but first we check if it exists
+    # reading the file given. but first we check if it exists
     if not os.path.exists(cleaned_txt_file):
         raise FileNotFoundError(f"Cleaned text file not found: {cleaned_txt_file}")
 
@@ -87,7 +91,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         f"Company: {company_name} | CIK_num: {CIK_num} | Accession No. : {accession_num}"
     )
 
-    # now we open the .txt file and read all the test into onr large string
+    # now we open the .txt file and read all the text into one large string
     try:
         with open(cleaned_txt_file, "r", encoding="utf-8") as f:
             cleaned_txt = f.read().strip()
@@ -109,20 +113,50 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
     )  # doc.sents is a generator of all the sentences spaCy found. we'll place it in a list to see how many sentences there are.
 
     if not sentences:
-        print("No sentences founf in this doc. Check your input file again")
+        print("No sentences found in this doc. Check your input file again")
         return []
+
+    # recent changes after first run: deduplicate sentences while preserving order
+    # dict.fromkeys() uses the sentences as keys (keys are unique) then converts back to list
+    sentences = list(dict.fromkeys(sent.text.strip() for sent in sentences))
+
+    # the next part is to skip boilerplate before real content by finding the first "Item 1" header
+    # next() walks the enumerated list and returns the index of the first match, or 0 if none found
+    start_index = next(
+        (i for i, s in enumerate(sentences) if SECTION_HEADER_PATTERN.match(s)),
+        0,  # default to 0 (start of document) if no Item header is found
+    )
+    sentences = sentences[start_index:]  # slice everything before Item 1 away
+    print(f"Starting from sentence {start_index} (first Item header found)")
 
     print(f"Found {len(sentences)} sentences. Running ESG classifier now.. ")
 
-    # now we'll only collect the ESG claims in this list
-    claims = []
+    # now adding CHECKPOINTING, i.e if a CSV already exists for this filing, load already-processed sentences
+    # so we can skip them and resume from where we left off instead of starting over
+    os.makedirs("data/processed/claims", exist_ok=True)
+    outputPath = (
+        f"data/processed/claims/claims_{company_name}_{CIK_num}_{accession_num}.csv"
+    )
 
-    for i, sent in enumerate(sentences):
-        # sent.text : plain str of sentences i.e no spaCy metadata
-        sentence_text = sent.text.strip()
+    if os.path.exists(outputPath):
+        existing_df = pd.read_csv(outputPath)
+        already_processed = set(existing_df["claim_text"].tolist())  # set = O(1) lookup
+        claims = existing_df.to_dict(
+            "records"
+        )  # load existing claims back into our list
+        print(f"Resuming — found {len(claims)} existing claims in checkpoint.")
+    else:
+        already_processed = set()
+        claims = []
 
+    for i, sentence_text in enumerate(sentences):
         # skipping blank or very short sentences like page nums, etc
         if len(sentence_text) < 10:
+            continue
+
+        # skip sentences we already processed in a previous run
+        if sentence_text in already_processed:
+            print(f"[{i + 1} / {len(sentences)}] Skipping (already processed)..")
             continue
 
         # checking for progress!
@@ -130,7 +164,6 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         print(f"[{i + 1} / {len(sentences)}] Checking: {sentence_text[:60]}..")
 
         # for each sentence, we run zero-shot classifier: is this an ESG claim? yes/no
-        # doc.sents into  individual sentences
         if is_esg_claim(sentence_text):
             # is_esg_claim() returns True or False
 
@@ -140,37 +173,28 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
             # one dict = one row in the final CSV
             claims.append(
                 {
+                    "company": company_name,
                     "CIK": CIK_num,
                     "Accession No.": accession_num,
-                    "category": category,  # if E/S/G
+                    "category": category,  # E/S/G
                     "claim_text": sentence_text,  # actual sentence claim
                 }
             )
+
+            # FIX 3 — write each new claim immediately so progress is never lost on a crash
+            # mode='a' appends one row, header=False skips rewriting column names each time
+            pd.DataFrame([claims[-1]]).to_csv(
+                outputPath,
+                mode="a",
+                header=not os.path.exists(outputPath) or i == 0,
+                index=False,
+            )
+            print(f"  ✓ Claim saved ({len(claims)} total so far)")
 
     # WARNING if nothing was found. problem is most likely from the model or an input issue
     if not claims:
         print("No ESG claims found. The file may not contain ESG-related content")
         return []
-
-    # now to save to .CSV
-    # converting the list of dictionaries into a pd dataframe (df)
-    # df == table where rows: claims and cols = the dict keys
-    df = pd.DataFrame(claims)
-
-    # save to data/processed/claims_{CIK}_{accession}.csv
-    # making sure it exists
-    os.makedirs("data/processed/claims", exist_ok=True)
-
-    # save to csv file
-    outputPath = (
-        f"data/processed/claims/claims_{company_name}_{(CIK_num)}_{accession_num}.csv"
-    )
-
-    # writing the df to CSV. Index=False means do not write
-    try:
-        df.to_csv(outputPath, index=False)
-    except Exception as e:
-        raise RuntimeError(f"Could not save CSV TO {outputPath}: {e}")
 
     print(f"\nDone! Saved {len(claims)} ESG claims for {company_name} to {outputPath}")
 
