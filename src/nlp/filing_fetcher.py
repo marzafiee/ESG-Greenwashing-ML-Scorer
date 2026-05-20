@@ -13,7 +13,9 @@ load_dotenv()  # loading the header value from .env
 
 
 def filing_fetcher(sec_JSON_filename, accession_num):
-    """this function"""
+    """
+    Returns the actual 10-K document given the SEC JSON filename and accession number
+    """
 
     headers = {"User-Agent": os.getenv("SEC_USER_AGENT")}
     # print("USER AGENT:", headers["User-Agent"])
