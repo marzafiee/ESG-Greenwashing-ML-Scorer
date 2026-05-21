@@ -35,14 +35,28 @@ def is_esg_claim(sentence: str) -> bool:
     then we run the heavier category tagger on sentences that pass
     """
     try:
-        # giving the classifier 2 candidate labels
+        # more specific labels so the model distinguishes claims from risk disclosures
         result = classifier(
-            sentence, candidate_labels=["ESG claim", "NOT an ESG claim"]
+            sentence,
+            candidate_labels=[
+                "specific measurable sustainability commitment or environmental/social/governance achievement with concrete data or targets",
+                "vague mission statement, brand value, or corporate aspiration with no measurable outcome",
+                "business risk, legal liability, or financial disclosure",
+                "product description, business model, or company strategy",
+                "regulatory compliance, government policy, or tax disclosure",
+            ],
         )
 
         # result["labels"]  -  sorts by score with highest first
         # thus, result["labels"][0] gives the winning label
-        return result["labels"][0] == "ESG claim"
+        # only accept as ESG claim if model is confident enough (threshold: 0.7)
+        top_label = result["labels"][0]
+        top_score = result["scores"][0]  # scores align with labels by rank
+        return (
+            top_label
+            == "specific measurable sustainability commitment or environmental/social/governance achievement with concrete data or targets"
+            and top_score >= 0.7
+        )
     except Exception as e:
         # if the classifier happens to fail on a sentence, we will log it and skip instead of craching the model run
         print(f"Warning! ESG check failed for sentence: {e}")
@@ -151,7 +165,15 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
 
     for i, sentence_text in enumerate(sentences):
         # skipping blank or very short sentences like page nums, etc
-        if len(sentence_text) < 10:
+        if len(sentence_text) < 20:
+            continue
+
+        # skip section headers and part markers that aren't real sentences
+        if re.match(
+            r"^(PART\s+[IVX]+|Item\s+\d+|Mine Safety)",
+            sentence_text.strip(),
+            re.IGNORECASE,
+        ):
             continue
 
         # skip sentences we already processed in a previous run
