@@ -40,11 +40,27 @@ def is_esg_claim(sentence: str) -> bool:
     """
     determines whether a sentence is a verifiable ESG claim
 
-    strict rule: For a sentence to be chosen as a claim, it must contain BOTH:
-    1. numeric evidence OR measurable quantity
-    2. action/change verb
+    strict rule: For a sentence to be chosen as a claim, it contains:
+    1. ESG context
+    2. AND (numeric evidence OR measurable quantity OR action/change verb)
     """
     text = sentence.lower()
+
+    # esg context
+    esg_terms = [
+        "emission", "carbon", "ghg", "climate",
+        "energy", "renewable", "solar", "battery",
+        "safety", "injury", "workplace", "labor",
+        "diversity", "inclusion", "human rights",
+        "privacy", "data", "security",
+        "sustainability", "waste", "water",
+        "net zero", "emissions"
+    ]
+
+    has_esg = any(term in text for term in esg_terms)
+    
+    if not has_esg:
+        return False
 
     # numeric evidence
     has_numeric = bool(
@@ -73,22 +89,20 @@ def is_esg_claim(sentence: str) -> bool:
 
     has_action = any(v in text for v in action_verbs)
 
-    # exclusions i.e non-claims
-    exclusions = [
-        "headquarters",
-        "incorporated",
-        "board consists",
-        "we operate in",
-        "we are headquartered",
-        "company was founded",
-        "fiscal year",
-        "shareholder meeting",
+    # updated to capture and avoid commitment phrases
+    commitment_phrases = [
+        "net zero",
+        "commit to",
+        "committed to",
+        "goal of",
+        "target of",
+        "plan to",
+        "intend to"
     ]
 
-    if any(e in text for e in exclusions):
-        return False
+    has_commitment = any(p in text for p in commitment_phrases)
 
-    return has_numeric and has_action
+    return has_esg and (has_numeric or has_action or has_commitment)
 
 
 # layer 2: ESG topic classification
