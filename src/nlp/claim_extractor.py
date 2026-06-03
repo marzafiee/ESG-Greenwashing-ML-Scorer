@@ -65,11 +65,15 @@ def is_esg_claim(sentence: str) -> bool:
     """
     determines whether a sentence is a verifiable ESG claim
 
-    strict rule: For a sentence to be chosen as a claim, it contains:
-    1. ESG context
-    2. AND (numeric evidence OR measurable quantity OR action/change verb)
+    strict rule: For a sentence to be chosen as a claim, it:
+    - MUST contain either action OR numeric OR commitment (numeric evidence OR measurable quantity OR action/change verb)
+    - should be ESG context
+    - BUT must NOT be purely regulatory language
     """
     text = sentence.lower()
+
+    if "we are required to" in text:
+        return False
 
     # esg context
     esg_terms = [
