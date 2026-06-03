@@ -105,6 +105,30 @@ def is_esg_claim(sentence: str) -> bool:
     return has_esg and (has_numeric or has_action or has_commitment)
 
 
+# layer 1.5 haha - trying to remove noise
+def is_noise(sentence: str) -> bool:
+    text = sentence.strip()
+
+    noise_patterns = [
+        r"^item\s+\d",       # Item 1, Item 2A
+        r"^part\s+[ivx]+",
+        r"^note\s+\d",       # Note 1
+        r"^exhibit",         # Exhibit tables
+        r"^form\s+\d",
+        r"xbrl",
+        r"consolidated financial statements",
+        r"cash flows from",
+        r"net cash",
+        r"stock-based compensation",
+        r"depreciation",
+        r"earnings per share",
+        r"balance sheets",
+        r"statements of operations"
+    ]
+
+    return any(re.search(p, text.lower()) for p in noise_patterns)
+
+
 # layer 2: ESG topic classification
 def get_esg_category(sentence: str) -> str:
     """
@@ -222,6 +246,10 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
             sentence_text.strip(),
             re.IGNORECASE,
         ):
+            continue
+        
+        # skip specified noise markers
+        if is_noise(sentence_text):
             continue
 
         # skip sentences we already processed in a previous run
