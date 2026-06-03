@@ -11,6 +11,7 @@ import pandas as pd  # to build and save csvs
 from transformers import pipeline  # Hugging Face which gives us ready-made AI model
 from dotenv import load_dotenv
 import re
+import hashlib
 
 load_dotenv()
 
@@ -33,6 +34,11 @@ except Exception as e:
 
 # matches SEC section headers like "Item 1." or "Item 1A" for same pattern as preprocessor.py so that we can skip these parts when running
 SECTION_HEADER_PATTERN = re.compile(r"^(item\s+\d+[a-zA-Z]?\.?)", re.IGNORECASE)
+
+
+# helper function to handle deduplication
+def hash_text(text):
+    return hashlib.md5(text.encode()).hexdigest()
 
 
 # layer 1: claim detection - rule-based, high precision
@@ -223,10 +229,14 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
 
     if os.path.exists(outputPath):
         existing_df = pd.read_csv(outputPath)
-        already_processed = set(existing_df["claim_text"].tolist())  # set = O(1) lookup
+        
         claims = existing_df.to_dict(
             "records"
         )  # load existing claims back into our list
+        
+        # use hashed text for safe matching (prevents formatting mismatches)
+        already_processed = set(existing_df["claim_text"].apply(hash_text))
+
         print(f"Resuming — found {len(claims)} existing claims in checkpoint.")
     else:
         already_processed = set()
@@ -248,6 +258,9 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         ):
             continue
         
+        if hash_text(sentence_text) in already_processed:
+            continue
+
         # skip specified noise markers
         if is_noise(sentence_text):
             continue
@@ -281,7 +294,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         )
 
         # FIX 3 — write each new claim immediately so progress is never lost on a crash
-        # mode='a' appends one row, header=False skips rewriting column names each time
+        # mode='a' appends one row
         pd.DataFrame([claims[-1]]).to_csv(
             outputPath,
             mode="a",
@@ -290,6 +303,9 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         )
 
         write_header = False
+
+        # update checkpoint memory
+        already_processed.add(hash_text(sentence_text))
 
         print(f"  ✓ Claim saved ({len(claims)} total so far)")
 
