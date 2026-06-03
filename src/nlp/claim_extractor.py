@@ -40,6 +40,25 @@ SECTION_HEADER_PATTERN = re.compile(r"^(item\s+\d+[a-zA-Z]?\.?)", re.IGNORECASE)
 def hash_text(text):
     return hashlib.md5(text.encode()).hexdigest()
 
+def is_risk_disclosure(sentence: str) -> bool:
+    text = sentence.lower()
+
+    risk_keywords = [
+        "may result in",
+        "could result in",
+        "may adversely affect",
+        "cannot assure",
+        "subject to",
+        "risk",
+        "uncertainty",
+        "potential impact",
+        "exposed to",
+        "depend on",
+        "failure to"
+    ]
+
+    return any(k in text for k in risk_keywords)
+
 
 # layer 1: claim detection - rule-based, high precision
 def is_esg_claim(sentence: str) -> bool:
@@ -263,6 +282,9 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
 
         # skip specified noise markers
         if is_noise(sentence_text):
+            continue
+
+        if is_risk_disclosure(sentence_text):
             continue
 
         # skip sentences we already processed in a previous run
