@@ -15,69 +15,100 @@ except OSError:
     # runs if spaCy model hasn't been downloaded yet
     raise OSError("spaCy model not found! Run: python -m spacy download en_core_web_sm")
 
+"""
+Pipeline Architecture: 2-stage pipeline:
+each sentence -> rule filter (is this a claim? -- high [recision filter]) -> ESG-BERT (what topic/category?) -> store structured claim
+"""
+
 # loading the Hugging Face zero-shot classifier
+# updated from model: facebook/bart-large-mnli to ESG Specific model: nbroad/ESG-BERT
 try:
-    classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+    # classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+    classifier = pipeline("text-classification", model="nbroad/ESG-BERT")
 except Exception as e:
     # same as before - means transformers/torch aren't installed
-    raise RuntimeError(f"Could not load Hugging Faceclassifier: {e}")
+    raise RuntimeError(f"Could not load ESG-BERT model: {e}")
 
-# now for the labels we'd be asking our classifier to choose between. the model will score all of them
+# now for the labels we'd be asking our classifier to choose between. the model will score all of them -- for reference only
 ESG_LABELS = ["Environmental", "Social", "Governance"]
 
 # matches SEC section headers like "Item 1." or "Item 1A" for same pattern as preprocessor.py so that we can skip these parts when running
 SECTION_HEADER_PATTERN = re.compile(r"^(item\s+\d+[a-zA-Z]?\.?)", re.IGNORECASE)
 
 
+# layer 1: claim detection - rule-based, high precision
 def is_esg_claim(sentence: str) -> bool:
     """
-    then to tag a category, we ask a yes / no for: "is this sentence an ESG claim at all?"
-    then we run the heavier category tagger on sentences that pass
-    """
-    try:
-        # more specific labels so the model distinguishes claims from risk disclosures
-        result = classifier(
-            sentence,
-            candidate_labels=[
-                "specific measurable sustainability commitment or environmental/social/governance achievement with concrete data or targets",
-                "vague mission statement, brand value, or corporate aspiration with no measurable outcome",
-                "business risk, legal liability, or financial disclosure",
-                "product description, business model, or company strategy",
-                "regulatory compliance, government policy, or tax disclosure",
-            ],
-        )
+    determines whether a sentence is a verifiable ESG claim
 
-        # result["labels"]  -  sorts by score with highest first
-        # thus, result["labels"][0] gives the winning label
-        # only accept as ESG claim if model is confident enough (threshold: 0.7)
-        top_label = result["labels"][0]
-        top_score = result["scores"][0]  # scores align with labels by rank
-        return (
-            top_label
-            == "specific measurable sustainability commitment or environmental/social/governance achievement with concrete data or targets"
-            and top_score >= 0.7
-        )
-    except Exception as e:
-        # if the classifier happens to fail on a sentence, we will log it and skip instead of craching the model run
-        print(f"Warning! ESG check failed for sentence: {e}")
+    strict rule: For a sentence to be chosen as a claim, it must contain BOTH:
+    1. numeric evidence OR measurable quantity
+    2. action/change verb
+    """
+    text = sentence.lower()
+
+    # numeric evidence
+    has_numeric = bool(
+        re.search(r"\d+%", text)
+        or re.search(r"\d+\s*(tons|tonnes|kg|mt|co2|co₂)", text)
+    )
+
+    # action verbs checking
+    action_verbs = [
+        "reduced",
+        "decreased",
+        "increased",
+        "improved",
+        "achieved",
+        "eliminated",
+        "cut",
+        "lowered",
+        "offset",
+        "prevented",
+        "committed",
+        "target",
+        "aim",
+        "expanded",
+        "achieve",
+    ]
+
+    has_action = any(v in text for v in action_verbs)
+
+    # exclusions i.e non-claims
+    exclusions = [
+        "headquarters",
+        "incorporated",
+        "board consists",
+        "we operate in",
+        "we are headquartered",
+        "company was founded",
+        "fiscal year",
+        "shareholder meeting",
+    ]
+
+    if any(e in text for e in exclusions):
         return False
 
+    return has_numeric and has_action
 
+
+# layer 2: ESG topic classification
 def get_esg_category(sentence: str) -> str:
     """
+    Assigns ESG-BERT topic to validated claim sentences.
     For sentences that ARE ESG claims, this picks E, S, or G.
     """
     try:
-        # using the same zero-shot approach but now with 3 categories
-        result = classifier(sentence, candidate_labels=ESG_LABELS)
-        return result["labels"][0]
+        # using the ESG-BERT model for topic classification
+        result = classifier(sentence)[0]
+        return result["label"]
     except Exception as e:
         # if category tagging fails, we label it Unknown so the claim still gets saved rather than being silently lost.
         print(f"Warning! Category tagging failed :( : {e}")
         return "Unknown"
 
 
-## our main function!
+## our main pipeline
 # input = cleaned text from preprocessor.py
 def claim_extractor(cleaned_txt_file: str) -> list[dict]:
     """
@@ -105,6 +136,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         f"Company: {company_name} | CIK_num: {CIK_num} | Accession No. : {accession_num}"
     )
 
+    # LOAD TEXT
     # now we open the .txt file and read all the text into one large string
     try:
         with open(cleaned_txt_file, "r", encoding="utf-8") as f:
@@ -163,6 +195,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         already_processed = set()
         claims = []
 
+    # main loop
     for i, sentence_text in enumerate(sentences):
         # skipping blank or very short sentences like page nums, etc
         if len(sentence_text) < 20:
@@ -185,33 +218,34 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         # indicator: zero-shot classification is slow (approx. 1-2s per sentence) so we'll know if it's working
         print(f"[{i + 1} / {len(sentences)}] Checking: {sentence_text[:60]}..")
 
+        # layer 1: claim filter
         # for each sentence, we run zero-shot classifier: is this an ESG claim? yes/no
-        if is_esg_claim(sentence_text):
-            # is_esg_claim() returns True or False
+        if not is_esg_claim(sentence_text):
+            continue
 
-            # TAGGING CATEGORIES
-            category = get_esg_category(sentence_text)
+        # TAGGING CATEGORIES -- ESG classification
+        category = get_esg_category(sentence_text)
 
-            # one dict = one row in the final CSV
-            claims.append(
-                {
-                    "company": company_name,
-                    "CIK": CIK_num,
-                    "Accession No.": accession_num,
-                    "category": category,  # E/S/G
-                    "claim_text": sentence_text,  # actual sentence claim
-                }
-            )
+        # one dict = one row in the final CSV
+        claims.append(
+            {
+                "company": company_name,
+                "CIK": CIK_num,
+                "Accession No.": accession_num,
+                "category": category,  # E/S/G
+                "claim_text": sentence_text,  # actual sentence claim
+            }
+        )
 
-            # FIX 3 — write each new claim immediately so progress is never lost on a crash
-            # mode='a' appends one row, header=False skips rewriting column names each time
-            pd.DataFrame([claims[-1]]).to_csv(
-                outputPath,
-                mode="a",
-                header=not os.path.exists(outputPath) or i == 0,
-                index=False,
-            )
-            print(f"  ✓ Claim saved ({len(claims)} total so far)")
+        # FIX 3 — write each new claim immediately so progress is never lost on a crash
+        # mode='a' appends one row, header=False skips rewriting column names each time
+        pd.DataFrame([claims[-1]]).to_csv(
+            outputPath,
+            mode="a",
+            header=not os.path.exists(outputPath) or i == 0,
+            index=False,
+        )
+        print(f"  ✓ Claim saved ({len(claims)} total so far)")
 
     # WARNING if nothing was found. problem is most likely from the model or an input issue
     if not claims:
