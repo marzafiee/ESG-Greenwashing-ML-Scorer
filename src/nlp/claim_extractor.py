@@ -40,6 +40,7 @@ SECTION_HEADER_PATTERN = re.compile(r"^(item\s+\d+[a-zA-Z]?\.?)", re.IGNORECASE)
 def hash_text(text):
     return hashlib.md5(text.encode()).hexdigest()
 
+
 def is_risk_disclosure(sentence: str) -> bool:
     text = sentence.lower()
 
@@ -54,7 +55,7 @@ def is_risk_disclosure(sentence: str) -> bool:
         "potential impact",
         "exposed to",
         "depend on",
-        "failure to"
+        "failure to",
     ]
 
     return any(k in text for k in risk_keywords)
@@ -72,29 +73,86 @@ def is_esg_claim(sentence: str) -> bool:
     """
     text = sentence.lower()
 
-    if "we are required to" in text:
+    # reject obvious non-claims
+    reject_patterns = [
+        "we are required to",
+        "must comply",
+        "subject to",
+        "risk",
+        "uncertainty",
+        "could result in",
+        "may result in",
+        "may adversely affect",
+        "cannot assure",
+        "tax credit",
+        "tax credits",
+        "internal revenue code",
+        "gross margin",
+        "revenue increased",
+        "revenue decreased",
+        "operating income",
+        "net income",
+        "cash flow",
+        "financial results",
+        "selling price",
+        "cost per unit",
+        "10-q",
+        "10-k",
+        "exhibit",
+        "certification",
+        "rule 13a",
+    ]
+
+    if any(p in text for p in reject_patterns):
         return False
 
     # esg context
     esg_terms = [
-        "emission", "carbon", "ghg", "climate",
-        "energy", "renewable", "solar", "battery",
-        "safety", "injury", "workplace", "labor",
-        "diversity", "inclusion", "human rights",
-        "privacy", "data", "security",
-        "sustainability", "waste", "water",
-        "net zero", "emissions"
+        "emission",
+        "emissions",
+        "carbon",
+        "ghg",
+        "supercharger",
+        "charging",
+        "electric vehicle",
+        "clean energy",
+        "grid",
+        "storage",
+        "gigafactory",
+        "climate",
+        "energy",
+        "renewable",
+        "solar",
+        "battery",
+        "safety",
+        "injury",
+        "workplace",
+        "labor",
+        "diversity",
+        "inclusion",
+        "human rights",
+        "privacy",
+        "data security",
+        "cybersecurity",
+        "sustainability",
+        "waste",
+        "water",
+        "net zero",
     ]
 
     has_esg = any(term in text for term in esg_terms)
-    
+
     if not has_esg:
         return False
 
     # numeric evidence
     has_numeric = bool(
         re.search(r"\d+%", text)
-        or re.search(r"\d+\s*(tons|tonnes|kg|mt|co2|co₂)", text)
+        or re.search(
+            r"\d+\.?\d*\s*(million|billion|tons|tonnes|kg|mt|co2|co₂|CO2|gwh|mwh|kwh|twh|gj|mj)",
+            text,
+        )
+        or re.search(r"\d{1,3}(,\d{3})+", text)  # catches 10,000 / 60,000 / 1,000,000
     )
 
     # action verbs checking
@@ -102,6 +160,7 @@ def is_esg_claim(sentence: str) -> bool:
         "reduced",
         "decreased",
         "increased",
+        "avoided",
         "improved",
         "achieved",
         "eliminated",
@@ -109,29 +168,40 @@ def is_esg_claim(sentence: str) -> bool:
         "lowered",
         "offset",
         "prevented",
-        "committed",
-        "target",
-        "aim",
         "expanded",
-        "achieve",
+        "developed",
+        "deployed",
+        "launched",
+        "implemented",
+        "powered",
+        "installed",
+        "avoided",
+        "sourced",
+        "diverted",
     ]
 
     has_action = any(v in text for v in action_verbs)
 
     # updated to capture commitment phrases
     commitment_phrases = [
-        "net zero",
-        "commit to",
         "committed to",
-        "goal of",
+        "net zero",
+        "by 2030",
+        "by 2040",
+        "by 2050",
         "target of",
-        "plan to",
-        "intend to"
+        "goal of",
+        "we aim to",
+        "plan to achieve",
+        "carbon neutral",
+        "100% renewable",
+        "powered by renewable",
+        "100% renewable",
+        "powered by clean",
     ]
-
     has_commitment = any(p in text for p in commitment_phrases)
 
-    return has_esg and (has_numeric or has_action or has_commitment)
+    return (has_numeric and has_action) or has_commitment
 
 
 # layer 1.5 haha - trying to remove noise
@@ -139,10 +209,10 @@ def is_noise(sentence: str) -> bool:
     text = sentence.strip()
 
     noise_patterns = [
-        r"^item\s+\d",       # Item 1, Item 2A
+        r"^item\s+\d",  # Item 1, Item 2A
         r"^part\s+[ivx]+",
-        r"^note\s+\d",       # Note 1
-        r"^exhibit",         # Exhibit tables
+        r"^note\s+\d",  # Note 1
+        r"^exhibit",  # Exhibit tables
         r"^form\s+\d",
         r"xbrl",
         r"consolidated financial statements",
@@ -152,7 +222,9 @@ def is_noise(sentence: str) -> bool:
         r"depreciation",
         r"earnings per share",
         r"balance sheets",
-        r"statements of operations"
+        r"statements of operations",
+        r"^table\s+\d+",
+        r"^schedule\s+[ivx]+",
     ]
 
     return any(re.search(p, text.lower()) for p in noise_patterns)
@@ -252,11 +324,11 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
 
     if os.path.exists(outputPath):
         existing_df = pd.read_csv(outputPath)
-        
+
         claims = existing_df.to_dict(
             "records"
         )  # load existing claims back into our list
-        
+
         # use hashed text for safe matching (prevents formatting mismatches)
         already_processed = set(existing_df["claim_text"].apply(hash_text))
 
@@ -265,7 +337,10 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         already_processed = set()
         claims = []
 
-    write_header = not os.path.exists(outputPath)
+    write_header = True
+
+    if os.path.exists(outputPath) and os.path.getsize(outputPath) > 0:
+        write_header = False
 
     # main loop
     for i, sentence_text in enumerate(sentences):
@@ -280,7 +355,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
             re.IGNORECASE,
         ):
             continue
-        
+
         if hash_text(sentence_text) in already_processed:
             continue
 
@@ -289,11 +364,6 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
             continue
 
         if is_risk_disclosure(sentence_text):
-            continue
-
-        # skip sentences we already processed in a previous run
-        if sentence_text in already_processed:
-            print(f"[{i + 1} / {len(sentences)}] Skipping (already processed)..")
             continue
 
         # checking for progress!
