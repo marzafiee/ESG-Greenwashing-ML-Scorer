@@ -1,4 +1,9 @@
-### building an NLP inference pipeline that fetches SEC filings, cleans them, and uses a pretrained zero-shot classification model to extract and categorize ESG claims from the text.
+### building an NLP pipeline that extracts ESG claims from SEC 10-K filings
+
+### Pipeline Architecture: 2-stage pipeline:
+# 1. rule-based ESG claim extraction (high precision filter)
+# 2. ESG-BERT topic classification
+# 3. structured claim export for greenwashing analysis
 
 import spacy  # NLP engine and sentence splitting
 import os
@@ -15,10 +20,6 @@ except OSError:
     # runs if spaCy model hasn't been downloaded yet
     raise OSError("spaCy model not found! Run: python -m spacy download en_core_web_sm")
 
-"""
-Pipeline Architecture: 2-stage pipeline:
-each sentence -> rule filter (is this a claim? -- high [recision filter]) -> ESG-BERT (what topic/category?) -> store structured claim
-"""
 
 # loading the Hugging Face zero-shot classifier
 # updated from model: facebook/bart-large-mnli to ESG Specific model: nbroad/ESG-BERT
@@ -29,8 +30,6 @@ except Exception as e:
     # same as before - means transformers/torch aren't installed
     raise RuntimeError(f"Could not load ESG-BERT model: {e}")
 
-# now for the labels we'd be asking our classifier to choose between. the model will score all of them -- for reference only
-ESG_LABELS = ["Environmental", "Social", "Governance"]
 
 # matches SEC section headers like "Item 1." or "Item 1A" for same pattern as preprocessor.py so that we can skip these parts when running
 SECTION_HEADER_PATTERN = re.compile(r"^(item\s+\d+[a-zA-Z]?\.?)", re.IGNORECASE)
@@ -195,6 +194,8 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         already_processed = set()
         claims = []
 
+    write_header = not os.path.exists(outputPath)
+
     # main loop
     for i, sentence_text in enumerate(sentences):
         # skipping blank or very short sentences like page nums, etc
@@ -242,9 +243,12 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
         pd.DataFrame([claims[-1]]).to_csv(
             outputPath,
             mode="a",
-            header=not os.path.exists(outputPath) or i == 0,
+            header=write_header,
             index=False,
         )
+
+        write_header = False
+
         print(f"  ✓ Claim saved ({len(claims)} total so far)")
 
     # WARNING if nothing was found. problem is most likely from the model or an input issue
