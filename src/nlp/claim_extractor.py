@@ -89,7 +89,7 @@ def is_esg_claim(sentence: str) -> bool:
 
     has_action = any(v in text for v in action_verbs)
 
-    # updated to capture and avoid commitment phrases
+    # updated to capture commitment phrases
     commitment_phrases = [
         "net zero",
         "commit to",
