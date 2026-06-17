@@ -61,6 +61,17 @@ def is_risk_disclosure(sentence: str) -> bool:
     return any(k in text for k in risk_keywords)
 
 
+# sustainability action lemmas! spaCy normalizes tense so we don't list every past-tense form manually
+# ("deployed" → "deploy", "installed" → "instal", etc.)
+_ACTION_LEMMAS = {
+    "reduce", "decrease", "increase", "avoid", "improve", "achieve", "eliminate",
+    "cut", "lower", "offset", "prevent", "expand", "develop", "deploy", "launch",
+    "implement", "power", "install", "source", "divert", "recycle", "conserve",
+    "restore", "mitigate", "decarbonize", "electrify", "transition", "invest",
+    "build", "construct", "generate", "produce", "deliver", "enable", "promote",
+    "locate", "co-locate", "instal",
+}
+
 # layer 1: claim detection - rule-based, high precision
 def is_esg_claim(sentence: str) -> bool:
     """
@@ -73,17 +84,18 @@ def is_esg_claim(sentence: str) -> bool:
     """
     text = sentence.lower()
 
-    # reject obvious non-claims
-    reject_patterns = [
+    # reject financial disclosures, regulatory boilerplate, and filing metadata
+    # phrase-level only — dropped bare "risk" and "subject to" because they false-positive on real ESG sentences
+    reject_phrases = [
         "we are required to",
-        "must comply",
-        "subject to",
-        "risk",
-        "uncertainty",
+        "required to comply",
+        "must comply with",
         "could result in",
         "may result in",
         "may adversely affect",
         "cannot assure",
+        "may expire",
+        "allocated funding",
         "tax credit",
         "tax credits",
         "internal revenue code",
@@ -96,17 +108,26 @@ def is_esg_claim(sentence: str) -> bool:
         "financial results",
         "selling price",
         "cost per unit",
-        "10-q",
-        "10-k",
-        "exhibit",
-        "certification",
         "rule 13a",
+        "form 10-k",
+        "form 10-q",
     ]
 
-    if any(p in text for p in reject_patterns):
+    # regex rejects for structured patterns (exhibit refs, SEC filing IDs)
+    # avoids blocking ESG sentences that mention energy storage etc.
+    reject_regexes = [
+        r"\bexhibit\s+\d",            # "Exhibit 10.2" table references
+        r"\b10-[qk]\b.*\d{3}-\d{5}",   # "10-Q 001-34756" filing identifiers
+        r"\bcertification\s+of\s+",    # officer certification headers
+    ]
+
+    if any(p in text for p in reject_phrases):
         return False
 
-    # esg context
+    if any(re.search(p, text) for p in reject_regexes):
+        return False
+
+    # esg context where the sentence must actually be about sustainability, not generic business talk
     esg_terms = [
         "emission",
         "emissions",
@@ -145,46 +166,25 @@ def is_esg_claim(sentence: str) -> bool:
     if not has_esg:
         return False
 
-    # numeric evidence
+    # numeric evidence like percentages, ESG units, or large comma-separated counts (10,000 / 60,000)
     has_numeric = bool(
         re.search(r"\d+%", text)
         or re.search(
-            r"\d+\.?\d*\s*(million|billion|tons|tonnes|kg|mt|co2|co₂|CO2|gwh|mwh|kwh|twh|gj|mj)",
+            r"\d+\.?\d*\s*(million|billion|tons|tonnes|kg|mt|co2|co₂|gwh|mwh|kwh|twh|gj|mj)",
             text,
         )
-        or re.search(r"\d{1,3}(,\d{3})+", text)  # catches 10,000 / 60,000 / 1,000,000
+        or re.search(r"\d{1,3}(,\d{3})+", text)
     )
 
-    # action verbs checking
-    action_verbs = [
-        "reduced",
-        "decreased",
-        "increased",
-        "avoided",
-        "improved",
-        "achieved",
-        "eliminated",
-        "cut",
-        "lowered",
-        "offset",
-        "prevented",
-        "expanded",
-        "developed",
-        "deployed",
-        "launched",
-        "implemented",
-        "powered",
-        "installed",
-        "avoided",
-        "sourced",
-        "diverted",
-    ]
+    # action verb check via spaCy lemmas instead of a manual past-tense list
+    doc = nlp(sentence)
+    verb_lemmas = {token.lemma_.lower() for token in doc if token.pos_ == "VERB"}
+    has_action = bool(verb_lemmas & _ACTION_LEMMAS)
 
-    has_action = any(v in text for v in action_verbs)
-
-    # updated to capture commitment phrases
+    # planning/target claims for future commitments that may not use past-tense verbs
     commitment_phrases = [
         "committed to",
+        "commit to",
         "net zero",
         "by 2030",
         "by 2040",
@@ -196,12 +196,14 @@ def is_esg_claim(sentence: str) -> bool:
         "carbon neutral",
         "100% renewable",
         "powered by renewable",
-        "100% renewable",
         "powered by clean",
     ]
     has_commitment = any(p in text for p in commitment_phrases)
 
-    return (has_numeric and has_action) or has_commitment
+    # accept if: commitment stated, OR ESG action verb in ESG context (with or without metrics)
+    # operational claims like co-locating chargers only need action + context
+    # outcome claims like "reduced waste by 30%" pair action with numeric evidence
+    return has_commitment or (has_action and (has_numeric or has_esg))
 
 
 # layer 1.5 haha - trying to remove noise
@@ -389,7 +391,7 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
             }
         )
 
-        # FIX 3 — write each new claim immediately so progress is never lost on a crash
+        # write each new claim immediately so progress is never lost on a crash
         # mode='a' appends one row
         pd.DataFrame([claims[-1]]).to_csv(
             outputPath,
@@ -416,8 +418,9 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
     return claims
 
 
-# quick test
-results = claim_extractor(
-    "data/cleaned/cleaned_Tesla, Inc._0001318605_0001628280-26-003952.txt"
-)
-print(f"\nReturned {len(results)} claims.")
+# quick test: this only runs when executing this file directly, not on import
+if __name__ == "__main__":
+    results = claim_extractor(
+        "data/cleaned/cleaned_Tesla, Inc._0001318605_0001628280-26-003952.txt"
+    )
+    print(f"\nReturned {len(results)} claims.")
