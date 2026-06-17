@@ -41,36 +41,49 @@ def hash_text(text):
     return hashlib.md5(text.encode()).hexdigest()
 
 
-def is_risk_disclosure(sentence: str) -> bool:
-    text = sentence.lower()
-
-    risk_keywords = [
-        "may result in",
-        "could result in",
-        "may adversely affect",
-        "cannot assure",
-        "subject to",
-        "risk",
-        "uncertainty",
-        "potential impact",
-        "exposed to",
-        "depend on",
-        "failure to",
-    ]
-
-    return any(k in text for k in risk_keywords)
-
-
 # sustainability action lemmas! spaCy normalizes tense so we don't list every past-tense form manually
 # ("deployed" → "deploy", "installed" → "instal", etc.)
 _ACTION_LEMMAS = {
-    "reduce", "decrease", "increase", "avoid", "improve", "achieve", "eliminate",
-    "cut", "lower", "offset", "prevent", "expand", "develop", "deploy", "launch",
-    "implement", "power", "install", "source", "divert", "recycle", "conserve",
-    "restore", "mitigate", "decarbonize", "electrify", "transition", "invest",
-    "build", "construct", "generate", "produce", "deliver", "enable", "promote",
-    "locate", "co-locate", "instal",
+    "reduce",
+    "decrease",
+    "increase",
+    "avoid",
+    "improve",
+    "achieve",
+    "eliminate",
+    "cut",
+    "lower",
+    "offset",
+    "prevent",
+    "expand",
+    "develop",
+    "deploy",
+    "launch",
+    "implement",
+    "power",
+    "install",
+    "source",
+    "divert",
+    "recycle",
+    "conserve",
+    "restore",
+    "mitigate",
+    "decarbonize",
+    "electrify",
+    "transition",
+    "invest",
+    "build",
+    "construct",
+    "generate",
+    "produce",
+    "deliver",
+    "enable",
+    "promote",
+    "locate",
+    "co-locate",
+    "instal",
 }
+
 
 # layer 1: claim detection - rule-based, high precision
 def is_esg_claim(sentence: str) -> bool:
@@ -116,9 +129,9 @@ def is_esg_claim(sentence: str) -> bool:
     # regex rejects for structured patterns (exhibit refs, SEC filing IDs)
     # avoids blocking ESG sentences that mention energy storage etc.
     reject_regexes = [
-        r"\bexhibit\s+\d",            # "Exhibit 10.2" table references
-        r"\b10-[qk]\b.*\d{3}-\d{5}",   # "10-Q 001-34756" filing identifiers
-        r"\bcertification\s+of\s+",    # officer certification headers
+        r"\bexhibit\s+\d",  # "Exhibit 10.2" table references
+        r"\b10-[qk]\b.*\d{3}-\d{5}",  # "10-Q 001-34756" filing identifiers
+        r"\bcertification\s+of\s+",  # officer certification headers
     ]
 
     if any(p in text for p in reject_phrases):
@@ -363,9 +376,6 @@ def claim_extractor(cleaned_txt_file: str) -> list[dict]:
 
         # skip specified noise markers
         if is_noise(sentence_text):
-            continue
-
-        if is_risk_disclosure(sentence_text):
             continue
 
         # checking for progress!
