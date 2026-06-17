@@ -1,156 +1,53 @@
-import re
+# tests for layer 1 of the claim pipeline — the rule-based is_esg_claim() pre-filter
+# imports the real function from claim_extractor so we don't maintain a duplicate copy
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+# mock transformers before importing claim_extractor — this test only needs is_esg_claim(), not ESG-BERT
+sys.modules["transformers"] = MagicMock()
+
+# add src/ to path so we can import nlp.claim_extractor like the rest of the pipeline
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from nlp.claim_extractor import is_esg_claim  # noqa: E402 — path must be set first
 
 
-def is_esg_claim(sentence: str) -> bool:
-    """
-    determines whether a sentence is a verifiable ESG claim
-
-    strict rule: For a sentence to be chosen as a claim, it:
-    - MUST contain either action OR numeric OR commitment (numeric evidence OR measurable quantity OR action/change verb)
-    - should be ESG context
-    - BUT must NOT be purely regulatory language
-    """
-    text = sentence.lower()
-
-    # reject obvious non-claims
-    reject_patterns = [
-        "we are required to",
-        "must comply",
-        "subject to",
-        "risk",
-        "uncertainty",
-        "could result in",
-        "may result in",
-        "may adversely affect",
-        "cannot assure",
-        "tax credit",
-        "tax credits",
-        "internal revenue code",
-        "gross margin",
-        "revenue increased",
-        "revenue decreased",
-        "operating income",
-        "net income",
-        "cash flow",
-        "financial results",
-        "selling price",
-        "cost per unit",
-        "10-q",
-        "10-k",
-        "exhibit",
-        "certification",
-        "rule 13a",
-    ]
-
-    if any(p in text for p in reject_patterns):
-        return False
-
-    # esg context
-    esg_terms = [
-        "emission",
-        "emissions",
-        "carbon",
-        "ghg",
-        "supercharger",
-        "charging",
-        "electric vehicle",
-        "clean energy",
-        "grid",
-        "storage",
-        "gigafactory",
-        "climate",
-        "energy",
-        "renewable",
-        "solar",
-        "battery",
-        "safety",
-        "injury",
-        "workplace",
-        "labor",
-        "diversity",
-        "inclusion",
-        "human rights",
-        "privacy",
-        "data security",
-        "cybersecurity",
-        "sustainability",
-        "waste",
-        "water",
-        "net zero",
-    ]
-
-    has_esg = any(term in text for term in esg_terms)
-
-    if not has_esg:
-        return False
-
-    # numeric evidence
-    has_numeric = bool(
-        re.search(r"\d+%", text)
-        or re.search(
-            r"\d+\.?\d*\s*(million|billion|tons|tonnes|kg|mt|co2|co₂|CO2|gwh|mwh|kwh|twh|gj|mj)",
-            text,
-        )
-        or re.search(r"\d{1,3}(,\d{3})+", text)  # catches 10,000 / 60,000 / 1,000,000
-    )
-
-    # action verbs checking
-    action_verbs = [
-        "reduced",
-        "decreased",
-        "increased",
-        "avoided",
-        "improved",
-        "achieved",
-        "eliminated",
-        "cut",
-        "lowered",
-        "offset",
-        "prevented",
-        "expanded",
-        "developed",
-        "deployed",
-        "launched",
-        "implemented",
-        "powered",
-        "installed",
-        "avoided",
-        "sourced",
-        "diverted",
-    ]
-
-    has_action = any(v in text for v in action_verbs)
-
-    # updated to capture commitment phrases
-    commitment_phrases = [
-        "committed to",
-        "net zero",
-        "by 2030",
-        "by 2040",
-        "by 2050",
-        "target of",
-        "goal of",
-        "we aim to",
-        "plan to achieve",
-        "carbon neutral",
-        "100% renewable",
-        "powered by renewable",
-        "100% renewable",
-        "powered by clean",
-    ]
-    has_commitment = any(p in text for p in commitment_phrases)
-
-    return (has_numeric and has_action) or has_commitment
-
-
-sentences = [
+# real ESG claims we expect the filter to keep — mix of outcome, operational, and commitment sentences
+SHOULD_CAPTURE = [
+    "In 2025, we deployed 46.7 GWh of energy storage products.",
+    "Where possible, we co-locate Superchargers with our solar and energy storage systems to reduce costs and promote renewable power.",
+    "We have committed to achieving net zero emissions by 2040.",
     "We reduced our manufacturing waste by 30% in 2025.",
     "Our Gigafactories are powered by renewable energy.",
-    "We have committed to achieving net zero emissions by 2040.",
     "Tesla installed 10,000 solar panels at our Austin facility.",
     "We expanded our Supercharger network to 60,000 stations globally.",
     "Our vehicles avoided 20 million metric tons of CO2 emissions.",
 ]
 
-for s in sentences:
-    print(is_esg_claim(s), "|", s[:60])
+# financial, regulatory, risk, and boilerplate sentences the filter should drop
+SHOULD_REJECT = [
+    "Gross margin for total automotive decreased from 18.4% to 17.8%",
+    "These incentives may expire when the allocated funding is exhausted",
+    "We are required to comply with other federal laws administered by NHTSA",
+    "10-Q 001-34756 10.2 July 29, 2019",
+]
+
+
+def test_captures_esg_claims():
+    # every sentence in SHOULD_CAPTURE must pass the pre-filter
+    for sentence in SHOULD_CAPTURE:
+        assert is_esg_claim(sentence), f"Expected claim but got reject: {sentence}"
+
+
+def test_rejects_non_claims():
+    # every sentence in SHOULD_REJECT must be blocked before ESG-BERT runs
+    for sentence in SHOULD_REJECT:
+        assert not is_esg_claim(sentence), f"Expected reject but got claim: {sentence}"
+
+
+if __name__ == "__main__":
+    test_captures_esg_claims()
+    test_rejects_non_claims()
+    print(f"All {len(SHOULD_CAPTURE) + len(SHOULD_REJECT)} claim-filter tests passed.")
