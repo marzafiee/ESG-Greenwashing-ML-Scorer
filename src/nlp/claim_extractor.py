@@ -56,7 +56,6 @@ _ACTION_LEMMAS = {
     "offset",
     "prevent",
     "expand",
-    "develop",
     "deploy",
     "launch",
     "implement",
@@ -75,9 +74,7 @@ _ACTION_LEMMAS = {
     "build",
     "construct",
     "generate",
-    "produce",
     "deliver",
-    "enable",
     "promote",
     "locate",
     "co-locate",
@@ -124,6 +121,7 @@ def is_esg_claim(sentence: str) -> bool:
         "rule 13a",
         "form 10-k",
         "form 10-q",
+        "intend",
     ]
 
     # regex rejects for structured patterns (exhibit refs, SEC filing IDs)
