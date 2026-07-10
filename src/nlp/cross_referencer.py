@@ -36,3 +36,16 @@ import uuid
 from datetime import date
 
 # starter configurations
+EMBED_MODEL = "all-MiniLM-L6-v2"
+NLI_MODEL = "roberta-large-mnli"
+TOP_K = 10  # how many articles to check per claim
+MIN_SIMILARITY = 0.3  # below this, an article isn't meaningful evidence for the claim
+NLI_PARAGRAPHS = 8  # only feed the first N paragraphs of an article to the NLI model
+OUTPUT_DIR = "data/processed/evidence"
+ 
+# roberta-large-mnli returns these labels, we map them to our own verdict names as aforementioned
+LABEL_TO_VERDICT = {
+    "ENTAILMENT": "SUPPORTS",
+    "CONTRADICTION": "CONTRADICTS",
+    "NEUTRAL": "UNVERIFIED",
+}
