@@ -53,6 +53,12 @@ LABEL_TO_VERDICT = {
 }
 
 
+# helper function to handle deduplication / checkpointing, similar to the functionlity in claim_extractor.py
+def hash_pair(claim_id, article_key):
+    # hashing claim_id + article_key together so we can tell if THIS specific (claim, article) match has already been written to the evidence csv
+    return hashlib.md5(f"{claim_id}::{article_key}".encode()).hexdigest()
+
+
 # ~~~~~~~~ LOADING MODELS, CLAIMS AND ARTICLES ~~~~~~~
 # function to load our models (only once!)
 def load_models():
