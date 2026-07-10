@@ -32,6 +32,7 @@ import csv
 import os
 import json
 import numpy as np
+import hashlib
 import uuid
 
 from datetime import date
@@ -52,6 +53,7 @@ LABEL_TO_VERDICT = {
 }
 
 
+# ~~~~~~~~ LOADING MODELS, CLAIMS AND ARTICLES ~~~~~~~
 # function to load our models (only once!)
 def load_models():
     """
@@ -70,6 +72,41 @@ def load_models():
         raise RuntimeError(f"Could not load NLI model '{NLI_MODEL}': {e}")
 
     return embedder, nli
+
+
+# function to load claims from our extracted claims .CSV file per company
+def load_claims(claims_csv_path):
+    """
+    Read the claims CSV into a list of dicts, generating claim_id if missing.
+    """
+    if not os.path.exists(claims_csv_path):
+        raise FileNotFoundError(f"Claims file not found: {claims_csv_path}")
+
+    with open(claims_csv_path, newline="", encoding="utf-8") as f:
+        claims = list(csv.DictReader(f))
+
+    if not claims:
+        print(f"Warning! Claims file '{claims_csv_path}' is empty.")
+        return []
+
+    # claim_text is the one column we truly can't function without
+    if "claim_text" not in claims[0].keys():
+        raise ValueError(
+            f"Claims CSV is missing the 'claim_text' column. "
+            f"Found columns: {list(claims[0].keys())}"
+        )
+
+    # claim_extractor.py doesn't output a claim_id column, so instead we will generate a stable one here from company + claim_text. stable = re-running on the same csv
+    # gives the same ids, which keeps the checkpointing in cross_reference() working
+    if "claim_id" not in claims[0].keys():
+        print(
+            "No claim_id column found so generating stable ids from company + claim_text."
+        )
+        for claim in claims:
+            basis = f"{claim.get('company', '')}::{claim.get('claim_text', '')}"
+            claim["claim_id"] = hashlib.md5(basis.encode()).hexdigest()[:8]
+
+    return claims
 
 
 def load_news(news_json_path):
