@@ -32,6 +32,7 @@ import csv
 import os
 import json
 import hashlib
+import numpy as np
 
 # starter configurations
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -135,3 +136,54 @@ def load_news(news_json_path):
         print(f"Warning! No usable articles found in '{news_json_path}'.")
 
     return usable
+
+
+# ~~~~~~~~ OTHER FUNCTIONS ~~~~~~~~~~~
+def embed_articles(embedder, articles):
+    """
+    This function encodes every article's full_text once. Row i aligns to articles[i].
+    """
+    texts = [a["full_text"] for a in articles]
+    return embedder.encode(texts, convert_to_tensor=True, show_progress_bar=True)
+
+
+def top_matches(embedder, claim_text, article_embeddings, k=TOP_K):
+    """
+    This function returns [(article_index, similarity_score), ...] for the top k articles.
+    """
+    claim_emb = embedder.encode(claim_text, convert_to_tensor=True)
+    scores = util.cos_sim(claim_emb, article_embeddings)[0]  # 1 row of scores
+    k = min(k, len(scores))  # in case there are fewer than TOP_K articles total
+    top_idx = np.argsort(scores.cpu().numpy())[::-1][:k]  # highest first
+    return [(int(i), float(scores[i])) for i in top_idx]
+
+
+def truncate_to_paragraphs(text, n=NLI_PARAGRAPHS):
+    # keeping only the first n paragraphs before the NLI step. full articles dilute the signal (meaning lots of irrelevant context competing with the one sentence that actually matters), and this also keeps us well under the model's 512-token limit instead of relying on hard truncation mid-sentence.
+    paragraphs = [p for p in text.split("\n") if p.strip()]
+    if not paragraphs:
+        return text
+    return "\n".join(paragraphs[:n])
+
+
+def classify(nli, article_text, claim_text):
+    """
+    this function runs the NLI with the article as premise and the claim as hypothesis.
+    Returns (verdict, confidence) where confidence is the winning label's score.
+    """
+    premise = truncate_to_paragraphs(article_text)
+
+    try:
+        # text-classification pipeline wants the pair as positional text + text_pair kwarg,
+        # not a dict — passing a dict silently mis-parses the pair in some transformers versions
+        result = nli(premise, text_pair=claim_text, truncation=True, max_length=512)
+        # with top_k=None the result is a list of {label, score} dicts, pick the max
+        scores = result[0] if isinstance(result[0], list) else result
+        best = max(scores, key=lambda d: d["score"])
+        verdict = LABEL_TO_VERDICT.get(best["label"].upper(), "UNVERIFIED")
+        return verdict, float(best["score"])
+    except Exception as e:
+        # if NLI fails on one pair, don't kill the whole run — same pattern as
+        # get_esg_category in claim_extractor.py, just mark it UNVERIFIED and move on
+        print(f"Warning! NLI classification failed on one (claim, article) pair: {e}")
+        return "UNVERIFIED", 0.0
