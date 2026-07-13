@@ -31,11 +31,7 @@ nli = pipeline("zero-shot-classification", model="cross-encoder/nli-MiniLM2-L6-H
 import csv
 import os
 import json
-import numpy as np
 import hashlib
-import uuid
-
-from datetime import date
 
 # starter configurations
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -47,9 +43,9 @@ OUTPUT_DIR = "data/processed/evidence"
 
 # roberta-large-mnli returns these labels, we map them to our own verdict names as aforementioned
 LABEL_TO_VERDICT = {
-    "ENTAILMENT": "SUPPORTS",
-    "CONTRADICTION": "CONTRADICTS",
-    "NEUTRAL": "UNVERIFIED",
+    "entailment": "SUPPORTS",
+    "contradiction": "CONTRADICTS",
+    "neutral": "UNVERIFIED",
 }
 
 
@@ -73,7 +69,7 @@ def load_models():
 
     try:
         # top_k=None => return scores for all three labels, not just the top one
-        nli = pipeline("text-classification", model=NLI_MODEL, top_k=None)
+        nli = pipeline("zero-shot-classification", model=NLI_MODEL)
     except Exception as e:
         raise RuntimeError(f"Could not load NLI model '{NLI_MODEL}': {e}")
 
