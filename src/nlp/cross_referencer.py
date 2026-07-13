@@ -33,6 +33,9 @@ import os
 import json
 import hashlib
 import numpy as np
+import uuid
+
+from datetime import date
 
 # starter configurations
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -168,22 +171,168 @@ def truncate_to_paragraphs(text, n=NLI_PARAGRAPHS):
 
 def classify(nli, article_text, claim_text):
     """
-    this function runs the NLI with the article as premise and the claim as hypothesis.
+    this function runs the NLI with the article as premise and the ESG claim as hypothesis.
+    Uses zero-shot-classification pipeline with roberta-large-mnli.
     Returns (verdict, confidence) where confidence is the winning label's score.
     """
     premise = truncate_to_paragraphs(article_text)
 
     try:
-        # text-classification pipeline wants the pair as positional text + text_pair kwarg,
-        # not a dict — passing a dict silently mis-parses the pair in some transformers versions
-        result = nli(premise, text_pair=claim_text, truncation=True, max_length=512)
-        # with top_k=None the result is a list of {label, score} dicts, pick the max
-        scores = result[0] if isinstance(result[0], list) else result
-        best = max(scores, key=lambda d: d["score"])
-        verdict = LABEL_TO_VERDICT.get(best["label"].upper(), "UNVERIFIED")
-        return verdict, float(best["score"])
+        # zero-shot-classification takes the premise as the first argument and candidate_labels as the hypothesis options to score against.
+        # roberta-large-mnli was trained on these three NLI labels specifically.
+        result = nli(
+            premise, candidate_labels=["entailment", "contradiction", "neutral"]
+        )
+
+        # zero-shot-classification returns a dict with "labels" and "scores" lists
+        # already sorted highest score first so index 0 is always the winning label
+        best_label = result["labels"][0]
+        best_score = result["scores"][0]
+
+        # then we map the NLI label to our project's verdict vocabulary
+        verdict = LABEL_TO_VERDICT.get(best_label.lower(), "UNVERIFIED")
+        return verdict, float(best_score)
     except Exception as e:
-        # if NLI fails on one pair, don't kill the whole run — same pattern as
-        # get_esg_category in claim_extractor.py, just mark it UNVERIFIED and move on
+        # if NLI fails on one pair, don't kill the whole run — same pattern as the get_esg_category() function in claim_extractor.py, just mark it UNVERIFIED and move on
         print(f"Warning! NLI classification failed on one (claim, article) pair: {e}")
         return "UNVERIFIED", 0.0
+
+
+# ~~~~~~~~~ saving ~~~~~~~~~~~~
+def save_evidence_row(row, out_path, write_header):
+    """
+    This function appends a single evidence row to the csv immediately, so progress is never lost on a crash.
+    """
+
+    fieldnames = [
+        "evidence_id",
+        "claim_id",
+        "company",
+        "claim_text",
+        "source_type",
+        "source_name",
+        "evidence_text",
+        "verdict",
+        "confidence_score",
+        "similarity_score",
+        "date_retrieved",
+        "url",
+    ]
+    with open(out_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+# ~~~~~~~~~ MAIN MAIN FUNCTION (putting it all together) ~~~~~~~~~
+def cross_reference(claims_csv_path, news_json_path, company_id="UNKNOWN"):
+    """
+    This function is the main entry point.
+    Returns the list of evidence dicts it also saved.
+    """
+
+    claims = load_claims(claims_csv_path)
+    articles = load_news(news_json_path)
+
+    if not claims or not articles:
+        print("No claims or no articles to process.")
+        return []
+
+    embedder, nli = load_models()
+    article_embeddings = embed_articles(embedder, articles)  # encode once
+
+    today = date.today().isoformat()
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    out_path = os.path.join(OUTPUT_DIR, f"evidence_{company_id}.csv")
+
+    # checkpointing where if an evidence csv already exists for this company, load what's already there and skip re-processing
+    # the same (claim, article) pairs on a re-run
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        with open(out_path, newline="", encoding="utf-8") as f:
+            existing_rows = list(csv.DictReader(f))
+        evidence_rows = existing_rows
+        already_processed = {
+            hash_pair(r["claim_id"], r["url"] or r["source_name"])
+            for r in existing_rows
+        }
+        write_header = False
+        print(
+            f"Resuming — found {len(evidence_rows)} existing evidence rows in checkpoint."
+        )
+    else:
+        evidence_rows = []
+        already_processed = set()
+        write_header = True
+
+    total_claims = len(claims)
+
+    for i, claim in enumerate(claims):
+        claim_text = claim.get("claim_text", "")
+        claim_id = claim.get("claim_id", "")
+
+        # skip malformed rows instead of letting the encoder choke on an empty string
+        if not claim_text:
+            print(
+                f"[{i + 1}/{total_claims}] Skipping claim with no claim_text (claim_id={claim_id})."
+            )
+            continue
+
+        print(f"[{i + 1}/{total_claims}] Checking: {claim_text[:60]}..")
+
+        for idx, sim in top_matches(embedder, claim_text, article_embeddings):
+            # skip near-irrelevant matches
+            if sim < MIN_SIMILARITY:
+                continue
+
+            article = articles[idx]
+            article_key = article.get("url") or article.get("title", "")
+
+            # skip pairs we've already written on a previous run
+            if hash_pair(claim_id, article_key) in already_processed:
+                continue
+
+            verdict, confidence = classify(nli, article["full_text"], claim_text)
+
+            row = {
+                "evidence_id": str(uuid.uuid4()),
+                "claim_id": claim_id,
+                "company": claim.get("company", ""),
+                "claim_text": claim_text[:300],
+                "source_type": "news",
+                "source_name": article.get("source", article.get("title", "")),
+                "evidence_text": article["full_text"][:500],  # snippet only
+                "verdict": verdict,
+                "confidence_score": round(confidence, 3),
+                "similarity_score": round(sim, 3),
+                "date_retrieved": today,
+                "url": article.get("url", ""),
+            }
+
+            evidence_rows.append(row)
+            save_evidence_row(row, out_path, write_header)
+            write_header = False
+            already_processed.add(hash_pair(claim_id, article_key))
+
+            print(
+                f"  ✓ Evidence saved ({len(evidence_rows)} total so far): verdict - {verdict}, sim - {round(sim, 3)}"
+            )
+
+    if not evidence_rows:
+        print(
+            "No evidence rows were generated. Check your claims/news inputs, or lower MIN_SIMILARITY."
+        )
+        return []
+
+    print(f"\nDone! Saved {len(evidence_rows)} evidence rows to {out_path}")
+    return evidence_rows
+
+
+# quick test: this only runs when executing this file directly, not on import
+if __name__ == "__main__":
+    cross_reference(
+        claims_csv_path="data/processed/claims/claims_Tesla, Inc._0001318605_0001628280-26-003952.csv",
+        news_json_path="data/raw/news_tesla.json",
+        company_id="TSLA",
+    )
