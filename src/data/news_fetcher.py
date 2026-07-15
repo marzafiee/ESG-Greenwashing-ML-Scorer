@@ -109,11 +109,12 @@ def fetch_news_articles(company_name):
             f"For: {company_name}, fetched {len(news_articles)} unique news articles after deduplication"
         )
 
-        # fetch full article text for each unique result — 1s delay between requests to avoid rate limits
+        # fetch full article text for each unique result with a 1 second delay between requests to avoid rate limits
         total = len(news_articles)
         for i, article in enumerate(news_articles):
             print(f"Fetching full text for article {i + 1}/{total}...")
 
+            # calling the fetch_article_text() here
             full_text = fetch_article_text(article.get("url"))
             if not full_text:
                 print(
@@ -151,4 +152,4 @@ def fetch_news_articles(company_name):
 
 
 # trials
-print(fetch_news_articles("Apple"))
+print(fetch_news_articles("Tesla"))
