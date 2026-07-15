@@ -35,7 +35,10 @@ import hashlib
 import numpy as np
 import uuid
 
+from dotenv import load_dotenv
 from datetime import date
+
+load_dotenv()  # loading HF_TOKEN for models
 
 # starter configurations
 EMBED_MODEL = "all-MiniLM-L6-v2"
